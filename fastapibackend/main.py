@@ -18,6 +18,7 @@ AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_REGION = os.getenv("AWS_REGION")
 DYNAMODB_TABLE_NAME = os.getenv("DYNAMODB_TABLE_NAME")
 BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID")
+KNOWLEDGE_BASE_ID = os.getenv("KNOWLEDGE_BASE_ID")
 
 # --- IBM Configuration ---
 IBM_API_KEY = os.getenv("IBM_API_KEY")
@@ -35,8 +36,8 @@ class DecimalEncoder(json.JSONEncoder):
 # --- FastAPI App Initialization ---
 app = FastAPI(
     title="Personalized Treatment Planner API",
-    description="API for ingesting data, generating summaries with IBM, and plans with AWS.",
-    version="1.5.5" # Final working version
+    description="API for ingesting data, generating plans, summaries, and providing RAG-based chat.",
+    version="2.1.0" # Two-Step RAG Fix
 )
 
 # --- Pydantic Data Models ---
@@ -55,6 +56,9 @@ class Patient(BaseModel):
     lifestyle: Dict[str, Any]
     currentMedications: List[Medication]
 
+class ChatQuery(BaseModel):
+    question: str = Field(..., example="What are the side effects of Lisinopril?")
+
 # --- AWS Service Connections ---
 aws_session = boto3.Session(
     aws_access_key_id=AWS_ACCESS_KEY_ID,
@@ -70,6 +74,14 @@ bedrock_runtime = boto3.client(
     aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
     region_name=AWS_REGION
 )
+
+bedrock_agent_runtime = boto3.client(
+    "bedrock-agent-runtime",
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+    region_name=AWS_REGION,
+)
+
 
 # --- Helper function for IBM watsonx.ai Authentication ---
 def get_ibm_iam_token():
@@ -210,7 +222,7 @@ JSON Response:
             "inputText": prompt,
             "textGenerationConfig": {
                 "maxTokenCount": 2048,
-                "temperature": 0.1,  # Lower temperature for more deterministic output
+                "temperature": 0.1,
                 "topP": 0.9
             }
         })
@@ -219,7 +231,7 @@ JSON Response:
             body=body, modelId=BEDROCK_MODEL_ID, accept='application/json', contentType='application/json'
         )
         response_body = json.loads(response.get('body').read())
-        plan_text = response_body.get('results')[0].get('outputText').strip()
+        plan_text = response_body.get('results')[0]['outputText'].strip()
         
         json_start = plan_text.find('{')
         json_end = plan_text.rfind('}') + 1
@@ -237,6 +249,82 @@ JSON Response:
         return plan_data
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Bedrock Error: {str(e)}")
+
+# --- RAG CHATBOT ENDPOINT (REWRITTEN FOR ROBUSTNESS) ---
+@app.post("/chat", summary="Chat with RAG Knowledge Base")
+async def chat_with_knowledge_base(query: ChatQuery):
+    """
+    Performs a robust, two-step RAG process using only AWS services.
+    1. Retrieve relevant documents from the Knowledge Base.
+    2. Generate an answer using the retrieved context with Amazon Titan.
+    """
+    if not KNOWLEDGE_BASE_ID or not BEDROCK_MODEL_ID:
+        raise HTTPException(status_code=500, detail="Knowledge Base or Bedrock Model ID is not configured.")
+
+    try:
+        # --- STEP 1: RETRIEVE relevant document chunks ---
+        retrieval_response = bedrock_agent_runtime.retrieve(
+            knowledgeBaseId=KNOWLEDGE_BASE_ID,
+            retrievalQuery={
+                'text': query.question
+            },
+            retrievalConfiguration={
+                'vectorSearchConfiguration': {
+                    'numberOfResults': 3  # Get the top 3 most relevant chunks
+                }
+            }
+        )
+        
+        retrieved_chunks = retrieval_response.get('retrievalResults', [])
+        
+        if not retrieved_chunks:
+            return {"answer": "I could not find any relevant information in the knowledge base to answer your question.", "sources": []}
+
+        # --- STEP 2: GENERATE an answer using the retrieved chunks ---
+        context = ""
+        sources = []
+        for chunk in retrieved_chunks:
+            context += chunk['content']['text'] + "\n"
+            source_uri = chunk.get('location', {}).get('s3Location', {}).get('uri')
+            if source_uri:
+                sources.append(source_uri)
+
+        # Construct a new prompt with the retrieved context
+        generation_prompt = f"""Human: You are a helpful medical chatbot. Using ONLY the following context, provide a concise answer to the user's question. Do not use any outside knowledge. If the context does not contain the answer, say so.
+
+Context:
+{context}
+
+User Question: {query.question}
+
+Assistant:
+"""
+        
+        # Call the standard Bedrock API, which we know works with Titan
+        body = json.dumps({
+            "inputText": generation_prompt,
+            "textGenerationConfig": {
+                "maxTokenCount": 1024,
+                "temperature": 0.1,
+                "topP": 0.9
+            }
+        })
+
+        generation_response = bedrock_runtime.invoke_model(
+            body=body, modelId=BEDROCK_MODEL_ID, accept='application/json', contentType='application/json'
+        )
+        
+        response_body = json.loads(generation_response.get('body').read())
+        answer = response_body.get('results')[0].get('outputText').strip()
+        
+        return {
+            "answer": answer,
+            "sources": list(set(sources)) # Return unique source URIs
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"RAG Chatbot Error: {str(e)}")
+
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

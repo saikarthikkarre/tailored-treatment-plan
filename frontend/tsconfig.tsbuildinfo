@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/components/chatpanel.tsx","./src/components/patientform.tsx","./src/components/planpanel.tsx","./src/components/summarypanel.tsx","./src/lib/api.ts"],"version":"5.9.2"}

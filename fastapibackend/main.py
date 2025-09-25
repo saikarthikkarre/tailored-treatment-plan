@@ -108,6 +108,17 @@ async def ingest_patient_data(patient: Patient):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"DynamoDB Error: {str(e)}")
 
+@app.get("/patients/{patient_id}", summary="Get Patient Data")
+async def get_patient_data(patient_id: str):
+    try:
+        response = table.get_item(Key={'patientId': patient_id})
+        patient_data = response.get('Item')
+        if not patient_data:
+            raise HTTPException(status_code=404, detail="Patient not found")
+        return patient_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"DynamoDB Error: {str(e)}")
+
 @app.post("/patients/{patient_id}/summarize", summary="Generate Summary with IBM Granite")
 async def generate_summary(patient_id: str):
     try:
@@ -180,6 +191,21 @@ Assistant:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
+@app.get("/patients/{patient_id}/plan", summary="Get Existing Treatment Plan")
+async def get_plan(patient_id: str):
+    try:
+        response = table.get_item(Key={'patientId': patient_id})
+        patient_data = response.get('Item')
+        if not patient_data:
+            raise HTTPException(status_code=404, detail="Patient not found")
+        
+        # Return 200 with an empty plan if not present so clients can decide to generate
+        if 'treatmentPlan' in patient_data and patient_data['treatmentPlan']:
+            return {"plan": patient_data['treatmentPlan']}
+        return {"plan": []}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"DynamoDB Error: {str(e)}")
+
 @app.post("/patients/{patient_id}/plan", summary="Generate Treatment Plan with AWS Bedrock")
 async def generate_plan(patient_id: str):
     try:
@@ -232,14 +258,56 @@ JSON Response:
         )
         response_body = json.loads(response.get('body').read())
         plan_text = response_body.get('results')[0]['outputText'].strip()
-        
-        json_start = plan_text.find('{')
-        json_end = plan_text.rfind('}') + 1
-        if json_start == -1 or json_end == 0:
-             raise HTTPException(status_code=500, detail=f"Failed to parse valid JSON from Bedrock response: {plan_text}")
-        
-        plan_json_str = plan_text[json_start:json_end]
-        plan_data = json.loads(plan_json_str)
+
+        # Extract JSON more robustly: handle either a JSON object with a "plan" field
+        # or a raw JSON array of recommendations.
+        plan_data: dict
+        parsed_any = False
+
+        # 1) Try to parse the entire string as JSON directly
+        try:
+            direct = json.loads(plan_text)
+            if isinstance(direct, dict) and 'plan' in direct:
+                plan_data = direct
+            elif isinstance(direct, list):
+                plan_data = { 'plan': direct }
+            else:
+                plan_data = { 'plan': direct.get('plan', []) } if isinstance(direct, dict) else { 'plan': [] }
+            parsed_any = True
+        except Exception:
+            parsed_any = False
+
+        if not parsed_any:
+            # 2) Look for a JSON array and parse it
+            arr_start = plan_text.find('[')
+            arr_end = plan_text.rfind(']') + 1
+            if arr_start != -1 and arr_end > arr_start:
+                try:
+                    arr = json.loads(plan_text[arr_start:arr_end])
+                    if isinstance(arr, list):
+                        plan_data = { 'plan': arr }
+                        parsed_any = True
+                except Exception:
+                    parsed_any = False
+
+        if not parsed_any:
+            # 3) Fallback: extract the first JSON object and wrap into plan if it's a single recommendation
+            json_start = plan_text.find('{')
+            json_end = plan_text.rfind('}') + 1
+            if json_start != -1 and json_end > json_start:
+                try:
+                    obj = json.loads(plan_text[json_start:json_end])
+                    if isinstance(obj, dict) and ('recommendation' in obj or 'justification' in obj):
+                        plan_data = { 'plan': [obj] }
+                        parsed_any = True
+                    elif isinstance(obj, dict) and 'plan' in obj:
+                        plan_data = obj
+                        parsed_any = True
+                except Exception:
+                    parsed_any = False
+
+        if not parsed_any:
+            raise HTTPException(status_code=500, detail=f"JSON parsing failed: Could not extract a valid plan. Response: {plan_text[:200]}...")
         
         table.update_item(
             Key={'patientId': patient_id},

@@ -130,19 +130,29 @@ async def generate_summary(patient_id: str):
         raise HTTPException(status_code=500, detail=f"DynamoDB Error: {str(e)}")
 
     primary_condition = patient_data.get("primaryCondition", "the disease")
-    prompt_text = f"""Human: You are an expert AI medical assistant that ALWAYS responds in a specific JSON format. Your task is to analyze the following patient data and provide a concise clinical summary and a list of possible similar symptoms for the patient's primary condition ({primary_condition}).
+    prompt_text = f"""
+Human: You are a board-certified clinical AI assistant specialized in evidence-based medicine. 
+Your responses must ALWAYS follow this exact JSON schema and remain highly concise, clinically accurate, and safe.
+Given the patient profile below, perform a thorough analysis using the latest global medical guidelines.
 
 Patient Data:
 {json.dumps(patient_data, indent=2, cls=DecimalEncoder)}
 
-IMPORTANT: Your entire response MUST be a single, valid JSON object, with no text or explanations before or after it. Use this exact format:
+Instructions:
+- Write a summary emphasizing actionable findings, risk factors, medication adherence, and comorbidity interplay.
+- Only include symptoms that have peer-reviewed clinical correlation.
+- Avoid assumptions, and flag data limitations.
+- Return only a single, valid JSON object. Do not add explanations before or after.
+
+Response Format (MANDATORY):
 {{
-  "summary": "A concise, well-written clinical summary of the patient goes here.",
+  "summary": "A concise, guideline-driven clinical summary of the case.",
   "similarSymptoms": ["Symptom 1", "Symptom 2", "Symptom 3"]
 }}
 
 Assistant:
 """
+
 
     try:
         iam_token = get_ibm_iam_token()
@@ -249,26 +259,34 @@ async def generate_plan(patient_id: str):
 
     # --- STEP 2: GENERATE PLAN USING THE IMPROVED PROMPT + CONTEXT ---
     prompt = f"""
-You are an expert AI medical assistant specializing in ophthalmology. Your task is to create a personalized and clinically relevant treatment plan.
-First, review the established clinical guidelines provided. Then, analyze the patient's data to generate three distinct recommendations.
+You are a board-certified ophthalmology expert AI. Generate a thoroughly justified, patient-centric treatment plan STRICTLY based on current clinical guidelines and the provided context.
 
-**Clinical Guidelines Context:**
+**Clinical Guidelines Context:** 
 {context}
 
-**Analysis Task:**
-Analyze the provided patient data carefully. The patient is a {patient_data.get('age')}-year-old {patient_data.get('gender')} diagnosed with a {patient_data.get('primaryCondition')}. Pay close attention to their lifestyle factors, such as daily smoking.
+Instructions:
+- Integrate the patient's age, gender, comorbidities, and unique lifestyle factors (i.e., daily smoking).
+- Provide THREE recommendations covering surgery, lifestyle, and monitoring.
+- For each, include a separate "justification" field linking back to clinical evidence or context excerpts.
+- If context is lacking, note the gap and default to established consensus best practice.
+- Output must be a single JSON object, no introductory text.
 
-**Patient Data:**
+JSON Schema (MANDATORY):
+{{
+  "plan": [
+    {{
+      "recommendation": "Text",
+      "justification": "Text—cite guideline or reason"
+    }},
+    ...
+  ]
+}}
+Review the data for contraindications or errors before finalizing.
+
+Patient Data:
 {json.dumps(patient_data, indent=2, cls=DecimalEncoder)}
-
-**Instructions & Constraints:**
-1.  Base your recommendations on the provided Clinical Guidelines Context and the patient's specific data.
-2.  Provide a balanced plan covering surgical options, lifestyle modifications, and monitoring.
-3.  Justifications must explain *why* a recommendation is appropriate for this patient.
-4.  Your entire output MUST be a single, valid JSON object, with no text before or after it.
-
-**JSON Response:**
 """
+
     
     try:
         body = json.dumps({
@@ -351,6 +369,65 @@ Analyze the provided patient data carefully. The patient is a {patient_data.get(
         
 
 # --- RAG CHATBOT ENDPOINT (REWRITTEN FOR ROBUSTNESS) ---
+# @app.post("/chat", summary="Chat with RAG Knowledge Base")
+# async def chat_with_knowledge_base(query: ChatQuery):
+#     if not KNOWLEDGE_BASE_ID or not BEDROCK_MODEL_ID:
+#         raise HTTPException(status_code=500, detail="Knowledge Base or Bedrock Model ID is not configured.")
+
+#     try:
+#         # Step 1: Retrieve relevant document chunks
+#         retrieval_response = bedrock_agent_runtime.retrieve(
+#             knowledgeBaseId=KNOWLEDGE_BASE_ID,
+#             retrievalQuery={'text': query.question},
+#             retrievalConfiguration={'vectorSearchConfiguration': {'numberOfResults': 3}}
+#         )
+
+#         retrieved_chunks = retrieval_response.get('retrievalResults', [])
+#         if not retrieved_chunks:
+#             return {"answer": "I could not find relevant information.", "sources": []}
+
+#         # Step 2: Generate answer
+#         context = ""
+#         sources = []
+#         for chunk in retrieved_chunks:
+#             context += chunk['content']['text'] + "\n"
+#             source_uri = chunk.get('location', {}).get('s3Location', {}).get('uri')
+#             if source_uri:
+#                 sources.append(source_uri)
+
+#         generation_prompt = f"""Human: You are an expert medical chatbot. ONLY use factual information from the provided knowledge base context; if information is missing, state so clearly.
+
+# Context:
+# {context}
+
+# User Question: {query.question}
+
+# Instructions:
+# - Respond ONLY with verified, guideline-supported answers.
+# - Do not speculate or generate content outside given context.
+# - List source document URIs as evidence for each statement.
+# - Keep answers concise, accurate, and safe.
+
+# Assistant:
+# """
+
+#         body = json.dumps({
+#             "inputText": generation_prompt,
+#             "textGenerationConfig": {"maxTokenCount":1024,"temperature":0.1,"topP":0.9}
+#         })
+
+#         generation_response = bedrock_runtime.invoke_model(
+#             body=body, modelId=BEDROCK_MODEL_ID, accept='application/json', contentType='application/json'
+#         )
+
+#         response_body = json.loads(generation_response.get('body').read())
+#         answer = response_body.get('results')[0].get('outputText').strip()
+
+#         return {"answer": answer, "sources": list(set(sources))}
+
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"RAG Chatbot Error: {str(e)}")
+
 @app.post("/chat", summary="Chat with RAG Knowledge Base")
 async def chat_with_knowledge_base(query: ChatQuery):
     if not KNOWLEDGE_BASE_ID or not BEDROCK_MODEL_ID:
@@ -377,15 +454,32 @@ async def chat_with_knowledge_base(query: ChatQuery):
             if source_uri:
                 sources.append(source_uri)
 
-        generation_prompt = f"""Human: You are a helpful medical chatbot. Using ONLY the following context, answer the user's question.
+        # Option 1: Keep the original working format but enhance instructions
+        generation_prompt = f"""Human: You are an expert medical chatbot. Use only the provided context to answer questions. If information is not in the context, state that clearly.
 
 Context:
 {context}
 
-User Question: {query.question}
+Question: {query.question}
 
-Assistant:
+Provide a factual, evidence-based answer using only the information above.
+
+A:
 """
+
+        # Option 2: Alternative format if your model supports it
+        # generation_prompt = f"""<s>[INST] You are an expert medical chatbot. Answer the question using ONLY the provided context.
+        
+        # Context: {context}
+        
+        # Question: {query.question}
+        
+        # Instructions:
+        # - Use only factual information from the context
+        # - If information is missing, state so clearly
+        # - Keep answers concise and accurate [/INST]
+        # """
+
         body = json.dumps({
             "inputText": generation_prompt,
             "textGenerationConfig": {"maxTokenCount":1024,"temperature":0.1,"topP":0.9}
@@ -396,12 +490,29 @@ Assistant:
         )
 
         response_body = json.loads(generation_response.get('body').read())
-        answer = response_body.get('results')[0].get('outputText').strip()
+        
+        # Add error handling for response parsing
+        try:
+            answer = response_body.get('results')[0].get('outputText').strip()
+        except (KeyError, IndexError, AttributeError) as e:
+            # Different models might have different response structures
+            print(f"Response structure: {response_body}")  # For debugging
+            # Try alternative response parsing
+            if 'completions' in response_body:
+                answer = response_body['completions'][0]['data']['text'].strip()
+            elif 'generation' in response_body:
+                answer = response_body['generation'].strip()
+            else:
+                raise HTTPException(status_code=500, detail=f"Unexpected response format: {response_body}")
 
         return {"answer": answer, "sources": list(set(sources))}
 
     except Exception as e:
+        print(f"Full error details: {str(e)}")  # For debugging
         raise HTTPException(status_code=500, detail=f"RAG Chatbot Error: {str(e)}")
+
+
+# Alternative version with model-specific prompt formatting
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

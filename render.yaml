@@ -1,0 +1,40 @@
+services:
+  # Backend API Service
+  - type: web
+    name: tailored-treatment-api
+    env: python
+    plan: starter
+    buildCommand: pip install -r fastapibackend/requirements.txt
+    startCommand: cd fastapibackend && python start.py
+    envVars:
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        value: us-east-1
+      - key: DYNAMODB_TABLE_NAME
+        sync: false
+      - key: BEDROCK_MODEL_ID
+        sync: false
+      - key: KNOWLEDGE_BASE_ID
+        sync: false
+      - key: IBM_API_KEY
+        sync: false
+      - key: IBM_API_URL
+        sync: false
+      - key: WATSONX_PROJECT_ID
+        sync: false
+      - key: PORT
+        value: 8000
+
+  # Frontend Service
+  - type: web
+    name: tailored-treatment-frontend
+    env: static
+    plan: starter
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: frontend/dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://tailored-treatment-api.onrender.com

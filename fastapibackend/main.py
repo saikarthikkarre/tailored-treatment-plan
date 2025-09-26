@@ -5,6 +5,9 @@ import requests
 import datetime
 from decimal import Decimal
 from fastapi import FastAPI, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any
 from dotenv import load_dotenv
@@ -39,6 +42,19 @@ app = FastAPI(
     description="API for ingesting data, generating plans, summaries, and providing RAG-based chat.",
     version="2.1.0" # Two-Step RAG Fix
 )
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, specify your frontend domain
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Mount static files for frontend (when built)
+if os.path.exists("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # --- Pydantic Data Models ---
 class Medication(BaseModel):
@@ -98,7 +114,14 @@ def get_ibm_iam_token():
 # --- API Endpoints ---
 @app.get("/", summary="Root Endpoint", include_in_schema=False)
 async def read_root():
+    # Serve frontend if available, otherwise return API status
+    if os.path.exists("static/index.html"):
+        return FileResponse("static/index.html")
     return {"status": "API is running"}
+
+@app.get("/health", summary="Health Check")
+async def health_check():
+    return {"status": "healthy", "version": "2.1.0"}
 
 @app.post("/patients", status_code=status.HTTP_201_CREATED, summary="Ingest Patient Data")
 async def ingest_patient_data(patient: Patient):
@@ -515,5 +538,6 @@ A:
 # Alternative version with model-specific prompt formatting
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
 

@@ -1,4 +1,39 @@
+# Environment variables
+.env
+.env.local
+.env.production
 
-fastapibackend/.env
+# Dependencies
 node_modules/
-fastapibackend/x.py
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+
+# Build outputs
+frontend/dist/
+fastapibackend/static/
+build/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp

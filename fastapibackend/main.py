@@ -206,6 +206,11 @@ async def get_plan(patient_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"DynamoDB Error: {str(e)}")
 
+
+
+
+
+
 @app.post("/patients/{patient_id}/plan", summary="Generate Treatment Plan with AWS Bedrock")
 async def generate_plan(patient_id: str):
     try:
@@ -216,31 +221,53 @@ async def generate_plan(patient_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"DynamoDB Error: {str(e)}")
 
-    prompt = f"""Task: Analyze the following patient data and generate exactly three treatment recommendations.
-Constraint: Your entire output must be a single, valid JSON object. Do not include any text, conversation, or explanation before or after the JSON object.
+    # --- STEP 1: RETRIEVE CONTEXT FROM KNOWLEDGE BASE (NEW) ---
+    try:
+        retrieval_query = (
+            f"Treatment guidelines and risk factors for cataracts, "
+            f"especially concerning young patients and smokers."
+        )
+        
+        retrieval_response = bedrock_agent_runtime.retrieve(
+            knowledgeBaseId=KNOWLEDGE_BASE_ID,
+            retrievalQuery={'text': retrieval_query},
+            retrievalConfiguration={
+                'vectorSearchConfiguration': {'numberOfResults': 3}
+            }
+        )
+        retrieved_chunks = retrieval_response.get('retrievalResults', [])
+        
+        context = ""
+        for chunk in retrieved_chunks:
+            context += chunk['content']['text'] + "\n---\n"
+            
+    except Exception as e:
+        # If retrieval fails, you can proceed without context or raise an error
+        print(f"Warning: Knowledge Base retrieval failed: {e}")
+        context = "No specific clinical guidelines were available."
 
-Patient Data:
+
+    # --- STEP 2: GENERATE PLAN USING THE IMPROVED PROMPT + CONTEXT ---
+    prompt = f"""
+You are an expert AI medical assistant specializing in ophthalmology. Your task is to create a personalized and clinically relevant treatment plan.
+First, review the established clinical guidelines provided. Then, analyze the patient's data to generate three distinct recommendations.
+
+**Clinical Guidelines Context:**
+{context}
+
+**Analysis Task:**
+Analyze the provided patient data carefully. The patient is a {patient_data.get('age')}-year-old {patient_data.get('gender')} diagnosed with a {patient_data.get('primaryCondition')}. Pay close attention to their lifestyle factors, such as daily smoking.
+
+**Patient Data:**
 {json.dumps(patient_data, indent=2, cls=DecimalEncoder)}
 
-Required JSON Format:
-{{
-  "plan": [
-    {{
-      "recommendation": "First treatment recommendation.",
-      "justification": "Justification for the first recommendation."
-    }},
-    {{
-      "recommendation": "Second treatment recommendation.",
-      "justification": "Justification for the second recommendation."
-    }},
-    {{
-      "recommendation": "Third treatment recommendation.",
-      "justification": "Justification for the third recommendation."
-    }}
-  ]
-}}
+**Instructions & Constraints:**
+1.  Base your recommendations on the provided Clinical Guidelines Context and the patient's specific data.
+2.  Provide a balanced plan covering surgical options, lifestyle modifications, and monitoring.
+3.  Justifications must explain *why* a recommendation is appropriate for this patient.
+4.  Your entire output MUST be a single, valid JSON object, with no text before or after it.
 
-JSON Response:
+**JSON Response:**
 """
     
     try:
@@ -248,7 +275,7 @@ JSON Response:
             "inputText": prompt,
             "textGenerationConfig": {
                 "maxTokenCount": 2048,
-                "temperature": 0.1,
+                "temperature": 0.2, # Slightly higher temp for more nuanced language
                 "topP": 0.9
             }
         })
@@ -256,6 +283,7 @@ JSON Response:
         response = bedrock_runtime.invoke_model(
             body=body, modelId=BEDROCK_MODEL_ID, accept='application/json', contentType='application/json'
         )
+        # ... (rest of your JSON parsing logic remains the same) ...
         response_body = json.loads(response.get('body').read())
         plan_text = response_body.get('results')[0]['outputText'].strip()
 
@@ -317,6 +345,10 @@ JSON Response:
         return plan_data
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Bedrock Error: {str(e)}")
+
+
+
+        
 
 # --- RAG CHATBOT ENDPOINT (REWRITTEN FOR ROBUSTNESS) ---
 @app.post("/chat", summary="Chat with RAG Knowledge Base")

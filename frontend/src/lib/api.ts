@@ -1,4 +1,7 @@
 import axios from 'axios'
+import { load_dotenv } from 'dotenv'
+load_dotenv()
+
 
 export type Medication = {
   name: string
@@ -32,7 +35,7 @@ export type ChatQuery = { question: string }
 export type ChatResponse = { answer: string; sources: string[] }
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || '/api',
+  baseURL: import.meta.env.VITE_API_URL || 'https://tailored-treatment-plan.onrender.com',
 })
 
 export async function createPatient(patient: Patient) {

@@ -1,4 +1,4 @@
-# Backend-only Dockerfile for production deployment
+# Backend-only Dockerfile for Render deployment
 FROM python:3.11-slim
 
 # Set working directory

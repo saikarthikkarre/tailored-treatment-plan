@@ -52,10 +52,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files for frontend (when built)
-if os.path.exists("static"):
-    app.mount("/static", StaticFiles(directory="static"), name="static")
-
 # --- Pydantic Data Models ---
 class Medication(BaseModel):
     name: str
@@ -114,10 +110,7 @@ def get_ibm_iam_token():
 # --- API Endpoints ---
 @app.get("/", summary="Root Endpoint", include_in_schema=False)
 async def read_root():
-    # Serve frontend if available, otherwise return API status
-    if os.path.exists("static/index.html"):
-        return FileResponse("static/index.html")
-    return {"status": "API is running"}
+    return {"status": "API is running", "version": "2.1.0"}
 
 @app.get("/health", summary="Health Check")
 async def health_check():

@@ -353,34 +353,22 @@ Analyze the provided patient data carefully. The patient is a {patient_data.get(
 # --- RAG CHATBOT ENDPOINT (REWRITTEN FOR ROBUSTNESS) ---
 @app.post("/chat", summary="Chat with RAG Knowledge Base")
 async def chat_with_knowledge_base(query: ChatQuery):
-    """
-    Performs a robust, two-step RAG process using only AWS services.
-    1. Retrieve relevant documents from the Knowledge Base.
-    2. Generate an answer using the retrieved context with Amazon Titan.
-    """
     if not KNOWLEDGE_BASE_ID or not BEDROCK_MODEL_ID:
         raise HTTPException(status_code=500, detail="Knowledge Base or Bedrock Model ID is not configured.")
 
     try:
-        # --- STEP 1: RETRIEVE relevant document chunks ---
+        # Step 1: Retrieve relevant document chunks
         retrieval_response = bedrock_agent_runtime.retrieve(
             knowledgeBaseId=KNOWLEDGE_BASE_ID,
-            retrievalQuery={
-                'text': query.question
-            },
-            retrievalConfiguration={
-                'vectorSearchConfiguration': {
-                    'numberOfResults': 3  # Get the top 3 most relevant chunks
-                }
-            }
+            retrievalQuery={'text': query.question},
+            retrievalConfiguration={'vectorSearchConfiguration': {'numberOfResults': 3}}
         )
-        
-        retrieved_chunks = retrieval_response.get('retrievalResults', [])
-        
-        if not retrieved_chunks:
-            return {"answer": "I could not find any relevant information in the knowledge base to answer your question.", "sources": []}
 
-        # --- STEP 2: GENERATE an answer using the retrieved chunks ---
+        retrieved_chunks = retrieval_response.get('retrievalResults', [])
+        if not retrieved_chunks:
+            return {"answer": "I could not find relevant information.", "sources": []}
+
+        # Step 2: Generate answer
         context = ""
         sources = []
         for chunk in retrieved_chunks:
@@ -389,8 +377,7 @@ async def chat_with_knowledge_base(query: ChatQuery):
             if source_uri:
                 sources.append(source_uri)
 
-        # Construct a new prompt with the retrieved context
-        generation_prompt = f"""Human: You are a helpful medical chatbot. Using ONLY the following context, provide a concise answer to the user's question. Do not use any outside knowledge. If the context does not contain the answer, say so.
+        generation_prompt = f"""Human: You are a helpful medical chatbot. Using ONLY the following context, answer the user's question.
 
 Context:
 {context}
@@ -399,32 +386,22 @@ User Question: {query.question}
 
 Assistant:
 """
-        
-        # Call the standard Bedrock API, which we know works with Titan
         body = json.dumps({
             "inputText": generation_prompt,
-            "textGenerationConfig": {
-                "maxTokenCount": 1024,
-                "temperature": 0.1,
-                "topP": 0.9
-            }
+            "textGenerationConfig": {"maxTokenCount":1024,"temperature":0.1,"topP":0.9}
         })
 
         generation_response = bedrock_runtime.invoke_model(
             body=body, modelId=BEDROCK_MODEL_ID, accept='application/json', contentType='application/json'
         )
-        
+
         response_body = json.loads(generation_response.get('body').read())
         answer = response_body.get('results')[0].get('outputText').strip()
-        
-        return {
-            "answer": answer,
-            "sources": list(set(sources)) # Return unique source URIs
-        }
+
+        return {"answer": answer, "sources": list(set(sources))}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"RAG Chatbot Error: {str(e)}")
-
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

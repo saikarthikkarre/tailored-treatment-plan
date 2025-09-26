@@ -243,7 +243,9 @@ export default function PatientForm({ onCreate }: Props) {
                     <button
                       type="button"
                       onClick={() => removeComorbidity(index)}
-                      className="text-red-500 hover:text-red-700 transition-colors">
+                      className="text-red-500 hover:text-red-700 transition-colors"
+                      aria-label={`Remove ${c} comorbidity`}
+                      title={`Remove ${c} comorbidity`}>
                       <X className="w-3 h-3" />
                     </button>
                   </motion.span>
@@ -306,12 +308,14 @@ export default function PatientForm({ onCreate }: Props) {
                       className="flex items-center justify-between p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800"
                     >
                       <span className="text-sm text-purple-700 dark:text-purple-300">
-                        <strong>{key}:</strong> {value}
+                        <strong>{key}:</strong> {String(value)}
                       </span>
                       <button
                         type="button"
                         onClick={() => removeMarker(key)}
                         className="text-purple-500 hover:text-purple-700 transition-colors"
+                        aria-label={`Remove ${key} genetic marker`}
+                        title={`Remove ${key} genetic marker`}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -373,12 +377,14 @@ export default function PatientForm({ onCreate }: Props) {
                       className="flex items-center justify-between p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800"
                     >
                       <span className="text-sm text-green-700 dark:text-green-300">
-                        <strong>{key}:</strong> {value}
+                        <strong>{key}:</strong> {String(value)}
                       </span>
                       <button
                         type="button"
                         onClick={() => removeLifestyle(key)}
                         className="text-green-500 hover:text-green-700 transition-colors"
+                        aria-label={`Remove ${key} lifestyle factor`}
+                        title={`Remove ${key} lifestyle factor`}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -456,6 +462,8 @@ export default function PatientForm({ onCreate }: Props) {
                         type="button"
                         onClick={() => removeMedication(index)}
                         className="text-orange-500 hover:text-orange-700 transition-colors"
+                        aria-label={`Remove ${m.name} medication`}
+                        title={`Remove ${m.name} medication`}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
